@@ -4,7 +4,9 @@ from huggingface_hub import InferenceClient
 
 # Conexión con su secreto HF
 HF_TOKEN = os.getenv("HF_TOKEN")
-MODELO_ACTIVO = "meta-llama/Meta-Llama-3-8B-Instruct"
+
+# Optimizamos a Gemma 2 9B (puedes cambiarlo si prefieres mantener Llama 3)
+MODELO_ACTIVO = "google/gemma-2-9b-it"
 
 # Inicializar el cliente de inferencia
 client = InferenceClient(MODELO_ACTIVO, token=HF_TOKEN)
@@ -16,7 +18,7 @@ SYSTEM_PROMPT = (
     "1. ENFOQUE INTEGRADO (PROYECTO-FINANZAS): Vincula siempre las fases o entregables del proyecto con su impacto financiero directo (CapEx, OpEx, ROI, VAN/TIR, control de desviaciones).\n"
     "2. DIAGNÓSTICO ESTRUCTURADO: Desglosa los problemas identificando causas raíz, cuellos de botella en la gestión y riesgos financieros asociados. Usa datos realistas.\n"
     "3. MARCO METODOLÓGICO Y RENTABILIDAD: Justifica tus propuestas utilizando frameworks reconocidos (PMBOK, Scrum, Lean, Six Sigma) combinados con ratios analíticos de rentabilidad.\n"
-    "4. PLAN DE ACCIÓN EJECUTIVO: Proponer recomendaciones priorizadas, accionables y con métricas claras de éxito.\n\n"
+    "4. PLAN DE ACCIÓN EJECUTIVO: Proponer recommendations priorizadas, accionables y con métricas claras de éxito.\n\n"
     "CONSTRICCIONES DE COMPORTAMIENTO:\n"
     "- Adopta un tono profesional, ejecutivo, analítico y corporativo.\n"
     "- Sé directo, objetivo y preciso en los cálculos o estimaciones conceptuales. No utilices generalidades vacías.\n"
@@ -25,7 +27,7 @@ SYSTEM_PROMPT = (
     "Presenta tu respuesta estructurada utilizando Markdown con la siguiente jerarquía formal:\n"
     "# DIAGNÓSTICO FINANCIERO Y OPERATIVO\n"
     "## [Subtítulo descriptivo de la situación actual]\n"
-    "# ANÁLISIS DE INDICADORES (MÉTRRICAS Y RATIOS)\n"
+    "# ANÁLISIS DE INDICADORES (MÉTRICAS Y RATIOS)\n"
     "## [Subtítulo sobre rendimiento de proyecto y financiero]\n"
     "# EVALUACIÓN DE RIESGOS Y BANDERAS ROJAS\n"
     "## [Subtítulo sobre amenazas potenciales]\n"
@@ -74,10 +76,15 @@ ejemplos = [
 demo = gr.ChatInterface(
     fn=responder,
     title="Yaneth-IA: Consultor en Gestión de Proyectos y Análisis Financiero.",
-    description="Soy Yaneth IA, una Inteligencia Artifcial, desarrollado por: Prof. Víctor Campos | CI V-8270225.",
+    description="Soy Yaneth IA, una Inteligencia Artificial, desarrollado por: Prof. Víctor Campos | CI V-8270225.",
     examples=ejemplos,
     cache_examples=False
 )
 
 if __name__ == "__main__":
-    demo.launch()
+    # MODIFICACIÓN CRÍTICA PARA RENDER: Configuración de puerto y host obligatorio
+    demo.launch(
+        server_name="0.0.0.0", 
+        server_port=10000,
+        inline=False
+    )
