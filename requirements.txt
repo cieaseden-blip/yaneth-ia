@@ -1,2 +1,3 @@
+weasyprint
 gradio
 huggingface_hub
