@@ -3,21 +3,19 @@ import gradio as gr
 from huggingface_hub import InferenceClient
 from weasyprint import HTML
 
-# Conexión con su secreto HF
+# ═══════════════════════════════════════════════════════════════
+# CONFIGURACIÓN Y CONSTANTES
+# ═══════════════════════════════════════════════════════════════
 HF_TOKEN = os.getenv("HF_TOKEN")
-
-# Optimizamos a Gemma 2 9B (puedes cambiarlo si prefieres mantener Llama 3)
 MODELO_ACTIVO = "Qwen/Qwen2.5-72B-Instruct"
 
-# Inicializar el cliente de inferencia
 client = InferenceClient(MODELO_ACTIVO, token=HF_TOKEN)
 
-# System Prompt estructurado según tus directrices de negocio y financieras
 SYSTEM_PROMPT = (
-    "Eres Yaneth-IA, una Inteligencia Artificial de Elite experta en Gestión de Proyectos, "
+    "Eres Yaneth-IA, una Inteligencia Artificial de Élite experta en Gestión de Proyectos "
     "y Análisis Financiero.\n\n"
     "TU ESPECIALIDAD Y SKILLS:\n"
-    "Tu especialidad es la dirección de proyectos, marcos agiles (PMO), diseño de PMO y metodologías de gestión tanto "
+    "Tu especialidad es la dirección de proyectos, marcos ágiles (PMO), diseño de PMO y metodologías de gestión tanto "
     "tradicionales (PMBOK/Predictivo) como ágiles (Scrum, Kanban). Tienes habilidades clave en la "
     "definición de alcance, diseño de EDT/WBS, gestión de interesados, estimación de presupuestos y "
     "análisis de ruta crítica (CPM). Tus respuestas deben estructurarse como entregables listos para "
@@ -43,34 +41,51 @@ SYSTEM_PROMPT = (
     "## [Subtítulo con los próximos pasos ejecutivos, EDT/WBS, historias de usuario o cronogramas secuenciales]"
 )
 
+# ═══════════════════════════════════════════════════════════════
+# FUNCIONES AUXILIARES
+# ═══════════════════════════════════════════════════════════════
+
 def procesar_historial_api(historial):
+    """
+    Convierte el historial de Gradio al formato de mensajes de la API de HuggingFace.
+    Soporta tanto formato dict (moderno) como tuplas/listas (legado).
+    """
     mensajes_api = [{"role": "system", "content": SYSTEM_PROMPT}]
+
     for elemento in historial:
-        # Caso 1: Gradio moderno pasa el historial como diccionarios
+        # Caso 1: Formato moderno de Gradio (diccionarios)
         if isinstance(elemento, dict):
             role = elemento.get("role")
             content = elemento.get("content")
             if role in ["user", "assistant"] and content:
                 mensajes_api.append({"role": role, "content": content})
-        
-        # Caso 2: Gradio antiguo o personalizado pasa tuplas/listas
+
+        # Caso 2: Formato legado de Gradio (tuplas/listas)
         elif isinstance(elemento, (list, tuple)) and len(elemento) >= 2:
             usuario, asistente = elemento[0], elemento[1]
-            if usuario: 
+            if usuario:
                 mensajes_api.append({"role": "user", "content": usuario})
-            if asistente: 
+            if asistente:
                 mensajes_api.append({"role": "assistant", "content": asistente})
+
     return mensajes_api
 
+
 def responder(mensaje, historial):
-    if not mensaje.strip():
+    """
+    Genera una respuesta en streaming usando el modelo de HuggingFace.
+    Maneja errores de forma robusta y actualiza el historial progresivamente.
+    """
+    if not mensaje or not mensaje.strip():
         yield historial
         return
 
+    # Preparar mensajes para la API
     mensajes_api = procesar_historial_api(historial)
     mensajes_api.append({"role": "user", "content": mensaje})
 
-    # El chatbot de Gradio moderno requiere actualizar agregando el mensaje del usuario primero
+    # Agregar mensaje del usuario al historial visual
+    historial = list(historial)  # Crear copia para evitar mutación inesperada
     historial.append({"role": "user", "content": mensaje})
     yield historial
 
@@ -85,196 +100,419 @@ def responder(mensaje, historial):
             token = chunk.choices[0].delta.content
             if token:
                 respuesta_completa += token
-                # Actualizamos o creamos la respuesta del asistente en el historial
-                if historial[-1]["role"] == "assistant":
+                # Actualizar la última entrada del asistente o crearla
+                if historial and historial[-1].get("role") == "assistant":
                     historial[-1]["content"] = respuesta_completa
                 else:
                     historial.append({"role": "assistant", "content": respuesta_completa})
                 yield historial
+
     except Exception as e:
-        error_msg = f"Error en la inferencia: {str(e)}. Por favor, reintenta."
-        if historial[-1]["role"] == "assistant":
+        error_msg = f"⚠️ Error en la inferencia: {str(e)}. Por favor, reintenta."
+        if historial and historial[-1].get("role") == "assistant":
             historial[-1]["content"] = error_msg
         else:
             historial.append({"role": "assistant", "content": error_msg})
         yield historial
 
-# EXPORTACIÓN A PDF CORPORATIVO CON WEASYPRINT
+
+# ═══════════════════════════════════════════════════════════════
+# EXPORTACIÓN A PDF — VERSIÓN CORREGIDA Y OPTIMIZADA
+# ═══════════════════════════════════════════════════════════════
+
 def exportar_a_pdf(historial):
+    """
+    Exporta el historial del chat a un PDF corporativo profesional.
+
+    CORRECCIONES APLICADAS:
+    - Manejo robusto de historial vacío o None
+    - Conversión de Markdown a HTML con la librería 'markdown'
+    - Procesamiento correcto de ambos formatos de historial (dict y tuplas)
+    - CSS mejorado con soporte para tablas, listas, código y énfasis
+    - Manejo de excepciones en la generación del PDF
+    - Ruta de salida absoluta para evitar problemas de permisos
+    """
+    import markdown
+    from datetime import datetime
+
+    # ── Validaciones iniciales ──────────────────────────────────
     if not historial:
         return None
-        
-    import markdown
-    
-    # Estructura del HTML con estilos CSS profesionales aptos para impresión
-    html_content = """
-    <html>
-    <head>
-        <meta charset="utf-8">
-        <style>
-            @page {
-                size: A4;
-                margin: 20mm 15mm;
-                @bottom-right {
-                    content: "Página " counter(page) " de " counter(pages);
-                    font-family: 'Arial', sans-serif;
-                    font-size: 9pt;
-                    color: #718096;
-                }
-                @bottom-left {
-                    content: "Yaneth-IA | Reporte Ejecutivo";
-                    font-family: 'Arial', sans-serif;
-                    font-size: 9pt;
-                    color: #718096;
-                }
-            }
-            body {
-                font-family: 'Arial', sans-serif;
-                color: #2d3748;
-                line-height: 1.5;
-                margin: 0;
-                padding: 0;
-            }
-            .header-banner {
-                background-color: #1a365d;
-                color: white;
-                padding: 20px;
-                margin-bottom: 25px;
-                border-radius: 4px;
-            }
-            .header-banner h1 {
-                margin: 0;
-                font-size: 20pt;
-                letter-spacing: 0.5px;
-            }
-            .header-banner p {
-                margin: 5px 0 0 0;
-                font-size: 10pt;
-                opacity: 0.8;
-            }
-            .bloque-conversacion {
-                margin-bottom: 20px;
-                page-break-inside: avoid;
-            }
-            .rol-usuario {
-                font-weight: bold;
-                color: #2b6cb0;
-                font-size: 11pt;
-                margin-bottom: 5px;
-                border-bottom: 1px solid #e2e8f0;
-                padding-bottom: 3px;
-            }
-            .rol-asistente {
-                font-weight: bold;
-                color: #2c5282;
-                font-size: 11pt;
-                margin-bottom: 5px;
-                border-bottom: 1px solid #e2e8f0;
-                padding-bottom: 3px;
-            }
-            .contenido {
-                font-size: 10pt;
-                text-align: justify;
-                margin-bottom: 15px;
-                padding-left: 5px;
-            }
-            /* Formateo de los entregables markdown de Yaneth-IA */
-            h1, h2, h3 { color: #1a365d; page-break-after: avoid; }
-            h1 { font-size: 14pt; border-left: 4px solid #1a365d; padding-left: 8px; margin-top: 20px; }
-            h2 { font-size: 12pt; color: #4a5568; }
-            table { width: 100%; border-collapse: collapse; margin: 15px 0; font-size: 9pt; }
-            th, td { border: 1px solid #cbd5e0; padding: 8px; text-align: left; }
-            th { background-color: #f7fafc; color: #2d3748; font-weight: bold; }
-            tr:nth-child(even) { background-color: #f8fafc; }
-        </style>
-    </head>
-    <body>
-        <div class="header-banner">
-            <h1>MINUTA Y REPORTE CONSULTIVO | YANETH-IA</h1>
-            <p>Consultoría en Gestión de Proyectos, PMO y Análisis Financiero de Inversiones</p>
-        </div>
-    """
-    
-    # Procesamos cada elemento del historial y lo convertimos a HTML estructurado
+
+    # Filtrar solo elementos válidos
+    historial_filtrado = []
     for elemento in historial:
+        if isinstance(elemento, dict) and elemento.get("role") in ["user", "assistant"]:
+            historial_filtrado.append(elemento)
+        elif isinstance(elemento, (list, tuple)) and len(elemento) >= 2:
+            historial_filtrado.append(elemento)
+
+    if not historial_filtrado:
+        return None
+
+    # ── Construcción del HTML ───────────────────────────────────
+    fecha_hora = datetime.now().strftime("%d/%m/%Y %H:%M")
+
+    html_content = f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Reporte Consultivo Yaneth-IA</title>
+    <style>
+        @page {{
+            size: A4;
+            margin: 20mm 15mm 25mm 15mm;
+            @bottom-right {{
+                content: "Página " counter(page) " de " counter(pages);
+                font-family: 'Arial', sans-serif;
+                font-size: 9pt;
+                color: #718096;
+            }}
+            @bottom-left {{
+                content: "Yaneth-IA | Reporte Ejecutivo";
+                font-family: 'Arial', sans-serif;
+                font-size: 9pt;
+                color: #718096;
+            }}
+        }}
+
+        body {{
+            font-family: 'Arial', 'Helvetica', sans-serif;
+            color: #2d3748;
+            line-height: 1.6;
+            margin: 0;
+            padding: 0;
+            font-size: 10.5pt;
+        }}
+
+        /* ── Encabezado corporativo ── */
+        .header-banner {{
+            background: linear-gradient(135deg, #1a365d 0%, #2c5282 100%);
+            color: white;
+            padding: 24px 20px;
+            margin-bottom: 30px;
+            border-radius: 6px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        }}
+        .header-banner h1 {{
+            margin: 0 0 6px 0;
+            font-size: 20pt;
+            letter-spacing: 0.5px;
+            font-weight: 700;
+        }}
+        .header-banner .subtitle {{
+            margin: 0;
+            font-size: 10pt;
+            opacity: 0.85;
+        }}
+        .header-banner .meta {{
+            margin: 8px 0 0 0;
+            font-size: 9pt;
+            opacity: 0.7;
+            border-top: 1px solid rgba(255,255,255,0.2);
+            padding-top: 6px;
+        }}
+
+        /* ── Bloques de conversación ── */
+        .bloque-conversacion {{
+            margin-bottom: 24px;
+            page-break-inside: avoid;
+        }}
+
+        .rol-usuario {{
+            font-weight: 700;
+            color: #2b6cb0;
+            font-size: 11pt;
+            margin-bottom: 6px;
+            border-bottom: 2px solid #bee3f8;
+            padding-bottom: 4px;
+            display: flex;
+            align-items: center;
+        }}
+        .rol-usuario::before {{
+            content: "▲";
+            margin-right: 8px;
+            font-size: 10pt;
+        }}
+
+        .rol-asistente {{
+            font-weight: 700;
+            color: #276749;
+            font-size: 11pt;
+            margin-bottom: 6px;
+            border-bottom: 2px solid #c6f6d5;
+            padding-bottom: 4px;
+            display: flex;
+            align-items: center;
+        }}
+        .rol-asistente::before {{
+            content: "◆";
+            margin-right: 8px;
+            font-size: 10pt;
+        }}
+
+        .contenido {{
+            text-align: justify;
+            padding-left: 8px;
+            color: #2d3748;
+        }}
+
+        /* ── Markdown renderizado ── */
+        .contenido h1 {{
+            color: #1a365d;
+            font-size: 14pt;
+            border-left: 4px solid #1a365d;
+            padding-left: 10px;
+            margin: 20px 0 12px 0;
+            page-break-after: avoid;
+        }}
+        .contenido h2 {{
+            color: #2d3748;
+            font-size: 12pt;
+            margin: 16px 0 10px 0;
+            page-break-after: avoid;
+        }}
+        .contenido h3 {{
+            color: #4a5568;
+            font-size: 11pt;
+            margin: 14px 0 8px 0;
+            page-break-after: avoid;
+        }}
+        .contenido p {{
+            margin: 8px 0;
+        }}
+        .contenido strong {{
+            color: #1a365d;
+        }}
+        .contenido em {{
+            color: #4a5568;
+        }}
+
+        /* ── Tablas ── */
+        .contenido table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin: 14px 0;
+            font-size: 9.5pt;
+            page-break-inside: avoid;
+        }}
+        .contenido th, .contenido td {{
+            border: 1px solid #cbd5e0;
+            padding: 8px 10px;
+            text-align: left;
+        }}
+        .contenido th {{
+            background-color: #edf2f7;
+            color: #1a365d;
+            font-weight: 700;
+        }}
+        .contenido tr:nth-child(even) {{
+            background-color: #f7fafc;
+        }}
+
+        /* ── Listas ── */
+        .contenido ul, .contenido ol {{
+            margin: 8px 0;
+            padding-left: 24px;
+        }}
+        .contenido li {{
+            margin: 4px 0;
+        }}
+
+        /* ── Bloques de código ── */
+        .contenido code {{
+            background-color: #edf2f7;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            font-size: 9.5pt;
+            color: #744210;
+        }}
+        .contenido pre {{
+            background-color: #2d3748;
+            color: #e2e8f0;
+            padding: 12px;
+            border-radius: 6px;
+            overflow-x: auto;
+            font-size: 9pt;
+            line-height: 1.4;
+            page-break-inside: avoid;
+        }}
+        .contenido pre code {{
+            background: none;
+            color: inherit;
+            padding: 0;
+        }}
+
+        /* ── Bloques de cita ── */
+        .contenido blockquote {{
+            border-left: 4px solid #cbd5e0;
+            margin: 12px 0;
+            padding: 8px 16px;
+            background-color: #f7fafc;
+            color: #4a5568;
+            font-style: italic;
+        }}
+
+        /* ── Separadores ── */
+        .contenido hr {{
+            border: none;
+            border-top: 1px solid #e2e8f0;
+            margin: 16px 0;
+        }}
+
+        /* ── Pie de página adicional ── */
+        .footer-nota {{
+            margin-top: 40px;
+            padding-top: 12px;
+            border-top: 1px solid #e2e8f0;
+            font-size: 8pt;
+            color: #a0aec0;
+            text-align: center;
+        }}
+    </style>
+</head>
+<body>
+    <div class="header-banner">
+        <h1>MINUTA Y REPORTE CONSULTIVO | YANETH-IA</h1>
+        <p class="subtitle">Consultoría en Gestión de Proyectos, PMO y Análisis Financiero de Inversiones</p>
+        <p class="meta">Generado el: {fecha_hora} | Desarrollado por: Prof. Víctor Campos</p>
+    </div>
+"""
+
+    # ── Procesar cada elemento del historial ─────────────────────
+    for elemento in historial_filtrado:
         user_text = ""
         bot_text = ""
-        
+
         if isinstance(elemento, dict):
-            if elemento.get("role") == "user":
-                user_text = elemento.get("content", "")
-            elif elemento.get("role") == "assistant":
-                bot_text = elemento.get("content", "")
+            role = elemento.get("role", "")
+            content = elemento.get("content", "")
+            if role == "user":
+                user_text = content
+            elif role == "assistant":
+                bot_text = content
         elif isinstance(elemento, (list, tuple)) and len(elemento) >= 2:
             user_text, bot_text = elemento[0], elemento[1]
-            
-        if user_text:
-            html_content += f"""
-            <div class="bloque-conversacion">
-                <div class="rol-usuario">▲ SOLICITUD DEL CLIENTE / USUARIO:</div>
-                <div class="contenido">{markdown.markdown(user_text)}</div>
-            </div>"""
-        if bot_text:
-            html_content += f"""
-            <div class="bloque-conversacion">
-                <div class="rol-asistente">◆ ENTREGABLE DE CONSULTORÍA (YANETH-IA):</div>
-                <div class="contenido">{markdown.markdown(bot_text)}</div>
-            </div>"""
-            
-    html_content += "</body></html>"
-    
-    # Guardar archivo PDF temporal
-    pdf_path = "Reporte_Consultoria_YanethIA.pdf"
-    HTML(string=html_content).write_pdf(pdf_path)
-    return pdf_path
 
-# Diseño de Interfaz Avanzada con Gradio Blocks
-with gr.Blocks(title="Yaneth-IA Executive Suite") as demo:
-    gr.Markdown("# Yaneth-IA: Consultor en Gestión de Proyectos y Análisis Financiero")
-    gr.Markdown("Desarrollado por: Prof. Víctor Campos | CI V-8270225")
-    
-    chatbot = gr.Chatbot(type="messages", label="Mesa de Trabajo Consultiva")
-    
-    # Agrupamos la entrada de texto para que se vea ordenada
+        # Renderizar texto del usuario
+        if user_text:
+            md_html = markdown.markdown(
+                user_text,
+                extensions=['tables', 'fenced_code', 'nl2br']
+            )
+            html_content += f"""
+            <div class="bloque-conversacion">
+                <div class="rol-usuario">SOLICITUD DEL CLIENTE / USUARIO</div>
+                <div class="contenido">{md_html}</div>
+            </div>"""
+
+        # Renderizar respuesta del asistente
+        if bot_text:
+            md_html = markdown.markdown(
+                bot_text,
+                extensions=['tables', 'fenced_code', 'nl2br']
+            )
+            html_content += f"""
+            <div class="bloque-conversacion">
+                <div class="rol-asistente">ENTREGABLE DE CONSULTORÍA (YANETH-IA)</div>
+                <div class="contenido">{md_html}</div>
+            </div>"""
+
+    # Cerrar documento
+    html_content += """
+    <div class="footer-nota">
+        Documento generado automáticamente por Yaneth-IA | Sujeto a revisión profesional.
+    </div>
+</body>
+</html>"""
+
+    # ── Generar PDF ─────────────────────────────────────────────
+    try:
+        pdf_path = os.path.abspath("Reporte_Consultoria_YanethIA.pdf")
+        HTML(string=html_content).write_pdf(pdf_path)
+        return pdf_path
+    except Exception as e:
+        print(f"Error al generar PDF: {e}")
+        return None
+
+
+# ═══════════════════════════════════════════════════════════════
+# INTERFAZ GRADIO — VERSIÓN OPTIMIZADA
+# ═══════════════════════════════════════════════════════════════
+
+with gr.Blocks(title="Yaneth-IA Executive Suite", css="""
+    .gradio-container { max-width: 1100px !important; }
+    .chatbot { min-height: 500px; }
+""") as demo:
+
+    gr.Markdown("""
+    # 🤖 Yaneth-IA: Consultor en Gestión de Proyectos y Análisis Financiero
+    > **Desarrollado por:** Prof. Víctor Campos | CI V-8270225
+    >
+    > *Especialista en PMO, CapEx/OpEx, EDT/WBS, Scrum, Kanban y análisis de rentabilidad de inversiones.*
+    """)
+
+    # ── Área de chat ──
+    chatbot = gr.Chatbot(
+        type="messages",
+        label="💼 Mesa de Trabajo Consultiva",
+        height=520,
+        bubble_full_width=False,
+        show_copy_button=True,
+    )
+
+    # ── Entrada de texto ──
     with gr.Row():
         msg = gr.Textbox(
-            placeholder="Escribe tu consulta sobre PMO, CapEx, OpEx, EDT o riesgos aquí...", 
-            label="Entrada de Consulta",
-            scale=4
+            placeholder="Escribe tu consulta sobre PMO, CapEx, OpEx, EDT, riesgos, cronogramas...",
+            label="📝 Entrada de Consulta",
+            scale=5,
+            lines=1,
+            show_label=True,
         )
-    
-    # Fila de botones de control y acción
+        btn_enviar = gr.Button("📤 Enviar", variant="primary", scale=1, size="lg")
+
+    # ── Botones de control ──
     with gr.Row():
-        btn_enviar = gr.Button("Enviar Consulta", variant="primary", scale=1)
-        btn_limpiar = gr.Button("Limpiar Chat", scale=1)
-    
-    # Separador visual para el área de exportación
+        btn_limpiar = gr.Button("🗑️ Limpiar Conversación", variant="stop", size="sm")
+        btn_pdf = gr.Button("📄 Exportar Minuta a PDF", variant="secondary", size="sm")
+
+    # ── Área de descarga ──
     gr.Markdown("---")
-    gr.Markdown("### 📄 Opciones de Exportación Corporativa")
-    
-    # Colocamos el botón de PDF y el cuadro de descarga uno al lado del otro
     with gr.Row():
-        btn_pdf = gr.Button("Formatear y Exportar Minuta a PDF", variant="secondary")
-        archivo_descarga = gr.File(label="Descargar Reporte PDF Generado", interactive=False)
-        
-    # Función auxiliar para limpiar la caja de texto tras enviar el mensaje
+        archivo_descarga = gr.File(
+            label="📥 Descargar Reporte PDF Generado",
+            interactive=False,
+            visible=True,
+        )
+
+    # ── Eventos ──
     def limpiar_entrada():
         return ""
 
-    # Acciones de la interfaz (Enviar con Click o con Enter)
+    def limpiar_chat():
+        return []
+
+    # Enviar con Enter o botón
     msg.submit(responder, [msg, chatbot], chatbot).then(limpiar_entrada, None, msg)
     btn_enviar.click(responder, [msg, chatbot], chatbot).then(limpiar_entrada, None, msg)
-    
-    # Acción para reiniciar el tablero
-    btn_limpiar.click(lambda: [], None, chatbot, queue=False)
-    
-    # Evento para generar y descargar el PDF
+
+    # Limpiar chat
+    btn_limpiar.click(limpiar_chat, None, chatbot, queue=False)
+
+    # Exportar PDF
     btn_pdf.click(exportar_a_pdf, inputs=[chatbot], outputs=[archivo_descarga])
 
+
+# ═══════════════════════════════════════════════════════════════
+# LANZAMIENTO
+# ═══════════════════════════════════════════════════════════════
+
 if __name__ == "__main__":
-    # CONFIGURACIÓN OBLIGATORIA PARA RENDER
     demo.launch(
-        server_name="0.0.0.0", 
+        server_name="0.0.0.0",
         server_port=10000,
-        inline=False
+        inline=False,
+        show_error=True,
     )
