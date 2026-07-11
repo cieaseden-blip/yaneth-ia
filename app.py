@@ -6,7 +6,7 @@ from huggingface_hub import InferenceClient
 HF_TOKEN = os.getenv("HF_TOKEN")
 
 # Optimizamos a Gemma 2 9B (puedes cambiarlo si prefieres mantener Llama 3)
-MODELO_ACTIVO = "meta-llama/Llama-3.1-8B-Instruct"
+MODELO_ACTIVO = "Qwen/Qwen2.5-72B-Instruct"
 
 # Inicializar el cliente de inferencia
 client = InferenceClient(MODELO_ACTIVO, token=HF_TOKEN)
