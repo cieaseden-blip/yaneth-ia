@@ -6,7 +6,7 @@ from huggingface_hub import InferenceClient
 HF_TOKEN = os.getenv("HF_TOKEN")
 
 # Optimizamos a Gemma 2 9B (puedes cambiarlo si prefieres mantener Llama 3)
-MODELO_ACTIVO = "Qwen/Qwen2.5-72B-Instruct"
+MODELO_ACTIVO = "meta-llama/Llama-3.1-8B-Instruct"
 
 # Inicializar el cliente de inferencia
 client = InferenceClient(MODELO_ACTIVO, token=HF_TOKEN)
@@ -54,7 +54,7 @@ def responder(mensaje, historial):
             content = elemento.get("content")
             if role in ["user", "assistant"] and content:
                 mensajes_api.append({"role": role, "content": content})
-        
+
         # Caso 2: Gradio antiguo o personalizado pasa tuplas/listas
         elif isinstance(elemento, (list, tuple)):
             # Si tiene el formato esperado (usuario, asistente)
@@ -111,7 +111,7 @@ demo = gr.ChatInterface(
 if __name__ == "__main__":
     # MODIFICACIÓN CRÍTICA PARA RENDER: Configuración de puerto y host obligatorio
     demo.launch(
-        server_name="0.0.0.0", 
+        server_name="0.0.0.0",
         server_port=10000,
         inline=False
     )
