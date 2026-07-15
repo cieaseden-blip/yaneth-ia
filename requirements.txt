@@ -1,3 +1,2 @@
-weasyprint
 gradio
-huggingface_hub
+cerebras_cloud_sdk

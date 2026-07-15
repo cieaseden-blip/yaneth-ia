@@ -1,15 +1,13 @@
 import os
 import gradio as gr
-from huggingface_hub import InferenceClient
+from cerebras.cloud.sdk import Cerebras
 
-# Conexión con su secreto HF
-HF_TOKEN = os.getenv("HF_TOKEN")
+# Inicializar el cliente de Cerebras
+# Asegúrate de configurar la variable de entorno CEREBRAS_API_KEY en Render
+client = Cerebras(api_key=os.getenv("CEREBRAS_API_KEY"))
 
-# Optimizamos a Gemma 2 9B (puedes cambiarlo si prefieres mantener Llama 3)
-MODELO_ACTIVO = "Qwen/Qwen2.5-72B-Instruct"
-
-# Inicializar el cliente de inferencia
-client = InferenceClient(MODELO_ACTIVO, token=HF_TOKEN)
+# Usando un modelo de alto rendimiento de Cerebras
+MODELO_ACTIVO = "gemma-4-31b"
 
 # System Prompt estructurado según tus directrices de negocio y financieras
 SYSTEM_PROMPT = (
@@ -58,72 +56,50 @@ SYSTEM_PROMPT = (
 def responder(mensaje, historial):
     mensajes_api = [{"role": "system", "content": SYSTEM_PROMPT}]
 
-    # Adaptación segura del historial de Gradio para la API de Hugging Face
+    # Adaptación del historial
     for elemento in historial:
-        # Caso 1: Gradio moderno pasa el historial como diccionarios {'role': '...', 'content': '...'}
         if isinstance(elemento, dict):
-            role = elemento.get("role")
-            content = elemento.get("content")
+            role, content = elemento.get("role"), elemento.get("content")
             if role in ["user", "assistant"] and content:
                 mensajes_api.append({"role": role, "content": content})
-
-        # Caso 2: Gradio antiguo o personalizado pasa tuplas/listas
         elif isinstance(elemento, (list, tuple)):
-            # Si tiene el formato esperado (usuario, asistente)
-            if len(elemento) == 2:
-                usuario, asistente = elemento
-                if usuario:
-                    mensajes_api.append({"role": "user", "content": usuario})
-                if asistente:
-                    mensajes_api.append({"role": "assistant", "content": asistente})
-            # Si viene con 4 elementos (metadatos de Gradio), extraemos los dos primeros
-            elif len(elemento) >= 2:
-                usuario, asistente = elemento[0], elemento[1]
-                if usuario:
-                    mensajes_api.append({"role": "user", "content": usuario})
-                if asistente:
-                    mensajes_api.append({"role": "assistant", "content": asistente})
+            if len(elemento) >= 2:
+                if elemento[0]: mensajes_api.append({"role": "user", "content": elemento[0]})
+                if elemento[1]: mensajes_api.append({"role": "assistant", "content": elemento[1]})
 
-    # Añadimos el último mensaje del usuario
     mensajes_api.append({"role": "user", "content": mensaje})
 
     respuesta_completa = ""
     try:
-        # Llamada por streaming al cliente de inferencia
-        for chunk in client.chat_completion(
+        # Llamada a Cerebras (formato compatible con OpenAI)
+        stream = client.chat.completions.create(
             messages=mensajes_api,
+            model=MODELO_ACTIVO,
             max_tokens=2500,
             temperature=0.7,
             stream=True
-        ):
+        )
+
+        for chunk in stream:
             token = chunk.choices[0].delta.content
             if token:
                 respuesta_completa += token
                 yield respuesta_completa
     except Exception as e:
-        yield f"Error en la inferencia: {str(e)}. Por favor, reintenta."
+        yield f"Error en la inferencia con Cerebras: {str(e)}"
 
-# Configuración de ejemplos para la interfaz
-ejemplos = [
-    ["Análisis de desvíos en un proyecto de software: CPI de 0.82 y SPI de 1.13."],
-    ["Evaluación de viabilidad y riesgos para migrar la infraestructura local a Cloud."],
-    ["Cálculo del impacto financiero (VAN, TIR y Payback) al implementar metodologías ágiles."],
-    ["Framework para una transición enfocada en optimizar el ROI de un portafolio de retail."]
-]
-
-# Construcción de la interfaz Gradio
+# Interfaz Gradio
 demo = gr.ChatInterface(
     fn=responder,
     title="Yaneth-IA: Consultor en Gestión de Proyectos y Análisis Financiero.",
-    description="Soy Yaneth IA, una Inteligencia Artificial, desarrollado por: Prof. Víctor Campos | CI V-8270225.",
-    examples=ejemplos,
+    description="Soy Yaneth IA, desarrollada por: Prof. Víctor Campos | CI V-8270225.",
+    examples=[
+        ["Análisis de desvíos: CPI 0.82 y SPI 1.13."],
+        ["Viabilidad para migrar infraestructura a Cloud."],
+        ["Impacto financiero (VAN, TIR) de metodologías ágiles."]
+    ],
     cache_examples=False
 )
 
 if __name__ == "__main__":
-    # MODIFICACIÓN CRÍTICA PARA RENDER: Configuración de puerto y host obligatorio
-    demo.launch(
-        server_name="0.0.0.0",
-        server_port=10000,
-        inline=False
-    )
+    demo.launch(server_name="0.0.0.0", server_port=10000, inline=False)
